@@ -2039,7 +2039,7 @@ const MISSIONS = [
     },
     steps: [
       {t: `בגליון של נועה, פתחו "התערבות פרטנית במערכת".`, ev: 'intervention.created', test: d => d.sid === 'noa' && d.kind === 'individual', hint: `גליון ← לשונית "התערבויות" ← "הוספת התערבות". כפתור בהיר = ההסכמה עוד לא חתומה.`},
-      {t: `מלאו סיבת פנייה ורקע מצבי. מה הביא את נועה עכשיו, ומה הנסיבות סביב? אחר כך לחצו "שמירה" (לא "סגירת מפגש").`, ev: 'meeting.saved', test: d => d.i.studentId === 'noa' && d.i.kind === 'individual' && d.i.details.reason1 && d.i.details.reason1 !== `משבר משפחתי` && /גירושי|משבר/.test(d.i.details.background || ''), hint: `סיבת פנייה = מה שרואים עכשיו (קשיים רגשיים, חרדה, סירוב ללכת לבית הספר). רקע מצבי = הנסיבות (גירושי הורים / פרידה).`},
+      {t: `מלאו סיבת פנייה ורקע מצבי. מה הביא את נועה עכשיו, ומה הנסיבות סביב? אחר כך לחצו "שמירה" (לא "סגירת מפגש").`, ev: 'meeting.saved', test: d => d.i.studentId === 'noa' && d.i.kind === 'individual' && d.i.details.reason1 && d.i.details.reason1 !== `משבר משפחתי` && /גירוש|פרידה|פרוד|פירוד|נפרד|משבר/.test(d.i.details.background || ''), hint: `סיבת פנייה = מה שרואים עכשיו (קשיים רגשיים, חרדה, סירוב ללכת לבית הספר). רקע מצבי = הנסיבות (גירושי הורים / פרידה).`},
       {t: `חזרו לשולחן העבודה. המפגש מחכה לכם ב"ממתין לטיפולי". מצאתם?`, ev: ['nav', 'hometab'], test: d => (d.route === 'home' || d.tab === 'pending') && pendingItems().some(x => x.i.studentId === 'noa')},
       {t: `חזרו למפגש. בלשונית "משימות" שלו הוסיפו: "לשלוח למיכל המלצות לשגרת בוקר".`, ev: 'task.created', test: d => d.t.src.studentId === 'noa', hint: `לחיצה על "התערבות פרטנית במערכת" בשורה ב"ממתין לטיפולי" מחזירה אתכם למפגש.`},
       {t: `השלימו סיכום רשומה ולחצו "סגירת מפגש".`, ev: 'meeting.closed', test: d => d.i.studentId === 'noa'},
@@ -2314,12 +2314,12 @@ const Phone = {
 
 /* ---------- trainer ---------- */
 const Trainer = {
-  prog(id) { return S.progress.m[id] || (S.progress.m[id] = {cur: 0, steps: {}, wrong: {}, done: false, hint: false}); },
+  prog(id) { return S.progress.m[id] || (S.progress.m[id] = {cur: 0, steps: {}, wrong: {}, done: false, hint: false, nudged: {}}); },
   addPoints(n) { S.progress.points += n; },
   sin(text) { S.progress.sins.push({text, m: S.progress.active, at: new Date().toLocaleTimeString('he-IL', {hour: '2-digit', minute: '2-digit'})}); toast(`נרשם ב"רשימת החטאים" (בחלונית "התקדמות")`, 'tr'); persist(); },
   start(id) {
     const M = MISSIONS.find(x => x.id === id);
-    S.progress.m[id] = {cur: 0, steps: {}, wrong: {}, done: false, hint: false};
+    S.progress.m[id] = {cur: 0, steps: {}, wrong: {}, done: false, hint: false, nudged: {}};
     S.progress.active = id;
     S.ui.drawer.open = true; S.ui.drawer.tab = 'missions';
     M.setup && M.setup();
@@ -2351,14 +2351,34 @@ const Trainer = {
     const before = Object.keys(P.steps).length;
     M.onAny && M.onAny(type, d, P, M);
     let adv = Object.keys(P.steps).length !== before;
+    // null = this event is not what the step waits for; false = it is, but the check failed.
+    const hits = st => {
+      if (![].concat(st.ev || []).includes(type)) return null;
+      try { return !!(!st.test || st.test(d)); } catch (e) { return false; }
+    };
     while (P.cur < M.steps.length) {
       const st = M.steps[P.cur];
-      if (st.quiz) break;
-      const evs = [].concat(st.ev || []);
-      let ok = false;
-      try { ok = evs.includes(type) && (!st.test || st.test(d)); } catch (e) { ok = false; }
-      if (!ok) break;
+      if (st.quiz || hits(st) !== true) break;
       this.complete(M, P, P.cur, 'done'); adv = true;
+    }
+    // Credit a step the trainee did out of order. Without this the event is
+    // lost, and the step stays open even though the work is done.
+    for (let k = P.cur + 1; k < M.steps.length; k++) {
+      const st = M.steps[k];
+      if (P.steps[k] || st.quiz) continue;
+      if (hits(st) === true) { this.complete(M, P, k, 'done'); adv = true; }
+    }
+    // The action was right but the check did not pass: say so once, and open
+    // the hint, instead of leaving the trainee wondering what was missed.
+    if (!adv && P.cur < M.steps.length && type !== 'consent.form') {
+      const st = M.steps[P.cur];
+      P.nudged = P.nudged || {};
+      if (!st.quiz && hits(st) === false && !P.nudged[P.cur]) {
+        P.nudged[P.cur] = true;
+        if (st.hint) P.hint = true;
+        toast(`הפעולה נרשמה, אבל הצעד עדיין לא הושלם.${st.hint ? ` ראו את הרמז.` : ''}`, 'tr');
+        this.renderDrawer(); persist();
+      }
     }
     if (adv) { toast(`✓ צעד הושלם`, 'tr'); this.renderDrawer(); this.renderStrip(); persist(); }
   },
