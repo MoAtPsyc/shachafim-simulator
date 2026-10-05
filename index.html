@@ -2023,8 +2023,8 @@ const MISSIONS = [
     },
     steps: [
       {t: `פתחו הסכמה מדעת לנועה כהן: הכפתור הכחול בשורה שלה, או בגליון ← "אישורים" ← "הוספת הסכמה מדעת".`, ev: 'modal.opened', test: d => d.name === 'consent' && d.id === 'noa'},
-      {t: `סמנו "התערבות פרטנית במערכת", ובשאלה שנפתחת: "כן, כולל מפגש ישיר".`, ev: 'consent.sent', test: d => d.sid === 'noa' && d.c.types.includes('individual') && d.c.direct === true, hint: `אחרי הסימון נפתחת שאלה על מפגש ישיר. התשובה קובעת מה מותר לכם לעשות עם נועה.`},
-      {t: `ודאו ששני ההורים נמענים ושאופן החתימה "פורטל הורים". לאבי חסר טלפון, והמערכת לא תשלח בלעדיו.`, ev: 'consent.sent', test: d => d.sid === 'noa' && d.c.recipients.length >= 2 && d.c.recipients.every(r => r.method === 'portal'), hint: `השלימו טלפון בשורה של אבי (למשל 052-1234567). להסיר אותו זו לא הדרך: שניהם אפוטרופוסים.`},
+      {t: `סמנו "התערבות פרטנית במערכת", ובשאלה שנפתחת: "כן, כולל מפגש ישיר".`, ev: ['consent.form', 'consent.sent'], test: d => d.sid === 'noa' && (d.c ? d.c.types.includes('individual') && d.c.direct === true : (d.f.types || []).includes('individual') && d.f.direct === 'yes'), hint: `אחרי הסימון נפתחת שאלה על מפגש ישיר. התשובה קובעת מה מותר לכם לעשות עם נועה.`},
+      {t: `ודאו ששני ההורים נמענים ושאופן החתימה "פורטל הורים". לאבי חסר טלפון, והמערכת לא תשלח בלעדיו.`, ev: ['consent.form', 'consent.sent'], test: d => d.sid === 'noa' && (d.c ? d.c.recipients.length >= 2 && d.c.recipients.every(r => r.method === 'portal') : d.recips.length >= 2 && d.recips.every(r => r.method === 'portal' && (r.phone || r.email))), hint: `השלימו טלפון בשורה של אבי (למשל 052-1234567). להסיר אותו זו לא הדרך: שניהם אפוטרופוסים.`},
       {t: `לחצו "אישור" ובדקו שהגליון של נועה עבר ל"בהמתנה".`, ev: 'consent.sent', test: () => sheetStatus('noa') === 'pending'},
       {t: `פתחו את "טלפון ההורה" (בפס העליון) וחתמו בתור מיכל.`, ev: 'consent.signed', test: d => d.sid === 'noa' && d.r.name.includes('מיכל')},
       {t: `אבי לא חתם (הוא בסופר). שלחו לו תזכורת: גליון נועה ← "אישורים" ← הפעמון. (או העתיקו קישור.)`, ev: ['reminder.sent', 'link.copied'], test: d => d.c.studentId === 'noa'},
@@ -2534,9 +2534,16 @@ document.addEventListener('submit', e => {
   const f = e.target, fn = A[f.dataset.aSubmit];
   if (fn) { try { fn(f); } catch (err) { console.error(err); } }
 });
+function consentFormEvent(el) {
+  const m = S.ui.modal;
+  if (!m || m.name !== 'consent' || !el.closest('#modal-root')) return;
+  const root = modalRoot();
+  emit('consent.form', {sid: m.props.id, f: readForm(root), recips: readRecips(root, m.props.recips)});
+}
 document.addEventListener('change', e => {
   const el = e.target;
   applyDeps(document);
+  consentFormEvent(el);
   if (el.name === 'famfill') C.famFill(el);
   if (el.dataset.c && C[el.dataset.c]) C[el.dataset.c](el);
   if (el.dataset.cAll) { const tb = el.closest('table'); $$(`[name="${el.dataset.cAll}"]`, tb).forEach(x => { x.checked = el.checked; }); }
@@ -2545,6 +2552,7 @@ document.addEventListener('change', e => {
 });
 document.addEventListener('input', e => {
   if (e.target.closest('[data-form="intv"]')) S.ui.dirty = true;
+  if (e.target.type === 'tel' || e.target.type === 'email') consentFormEvent(e.target);
 });
 let rafPending = false;
 const repos = () => { if (rafPending) return; rafPending = true; requestAnimationFrame(() => { rafPending = false; Explore.position(); }); };
